@@ -7,8 +7,20 @@
 'use strict';
 
 // Dependencies
-var request = require('request');
 var Promise = require('promise');
+var fetch = require('isomorphic-fetch');
+var merge = require('lodash.merge');
+
+/**
+ * Build query string
+ */
+function encodeQueryData(data) {
+  var ret = [];
+  for (var d in data) {
+    ret.push(`${encodeURIComponent(d)}=${encodeURIComponent(data[d])}`);
+  }
+  return ret.join('&');
+}
 
 function RobinhoodWebApi(opts, callback) {
 
@@ -55,7 +67,6 @@ function RobinhoodWebApi(opts, callback) {
         news: 'midlands/news/'
     },
     _isInit = false,
-    _request = request.defaults(),
     _private = {
       session : {},
       account: null,
@@ -78,7 +89,6 @@ function RobinhoodWebApi(opts, callback) {
         'Connection': 'keep-alive',
         'User-Agent': 'Robinhood/823 (iPhone; iOS 7.1.2; Scale/2.00)'
     };
-    _setHeaders();
     _login(function(){
       _isInit = true;
 
@@ -88,21 +98,61 @@ function RobinhoodWebApi(opts, callback) {
     });
   }
 
-  function _setHeaders(){
-    _request = request.defaults({
+  function _getFetchOpts(options){
+    var _opts = {
+      method: 'GET',
+      mode: 'cors',
+      headers: {
+        host: 'api.robinhood.com',
+      },
+      credentials: 'include',
+    };
+    // merge basic template with headers and options
+    merge(_opts, {
       headers: _private.headers,
-      json: true,
-      gzip: true
-    });
+    }, options);
+    // convert object to FormData query
+    if (_opts.body && typeof _opts.body !== 'string') {
+      _opts.body = encodeQueryData(_opts.body);
+    }
+    // add content-length header
+    if (typeof _opts.body === 'string') {
+      _opts.headers['content-length'] = _opts.body.length;
+    }
+    return _opts;
+  }
+
+  function _fetch(url, options, callback) {
+    var urlWQuery = options.qs ? url + '?' + encodeQueryData(options.qs) : url;
+    fetch(urlWQuery, _getFetchOpts(options))
+      .then(function (response) {
+        if (!response.ok) {
+          throw (response.status);
+        }
+        return response.json();
+      })
+      .then(function (body) {
+        if (callback) {
+          callback(null, null, body);
+        }
+      })
+      .catch(function (err) {
+        if (callback) {
+          callback(err);
+        }
+        else {
+          throw (err);
+        }
+      });
   }
 
   function _login(callback){
-    _request.post({
-      uri: _apiUrl + _endpoints.login,
-      form: {
+    _fetch(_apiUrl + _endpoints.login, {
+      body: {
         password: _private.password,
         username: _private.username
-      }
+      },
+      method: 'POST',
     }, function(err, httpResponse, body) {
       if(err) {
         throw (err);
@@ -110,8 +160,6 @@ function RobinhoodWebApi(opts, callback) {
 
       _private.auth_token = body.token;
       _private.headers.Authorization = 'Token ' + _private.auth_token;
-
-      _setHeaders();
 
       // Set account
       api.accounts(function(err, httpResponse, body) {
@@ -132,61 +180,61 @@ function RobinhoodWebApi(opts, callback) {
    * |      Define API methods        | *
    * +--------------------------------+ */
   api.investment_profile = function(callback){
-    return _request.get({
-        uri: _apiUrl + _endpoints.investment_profile
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.investment_profile, {
+      method: 'get',
+    }, callback);
   };
 
   api.fundamentals = function(ticker, callback){
-    return _request.get({
-        uri: _apiUrl + _endpoints.fundamentals,
-        qs: { 'symbols': ticker }
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.fundamentals, {
+      method: 'get',
+      qs: { 'symbols': ticker }
+    }, callback);
   };
 
   api.instruments = function(symbol, callback){
-    return _request.get({
-        uri: _apiUrl + _endpoints.instruments,
-        qs: {'query': symbol.toUpperCase()}
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.instruments, {
+      method: 'get',
+      qs: { 'query': symbol.toUpperCase() }
+    }, callback);
   };
 
   api.quote_data = function(symbol, callback){
     symbol = Array.isArray(symbol) ? symbol = symbol.join(',') : symbol;
-    return _request.get({
-        uri: _apiUrl + _endpoints.quotes,
-        qs: { 'symbols': symbol.toUpperCase() }
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.quotes, {
+      method: 'get',
+      qs: { 'symbols': symbol.toUpperCase() }
+    }, callback);
   };
 
   api.accounts= function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.accounts
+    return _fetch(_apiUrl + _endpoints.accounts, {
+      method: 'get',
     }, callback);
   };
 
   api.user = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.user
+    return _fetch(_apiUrl + _endpoints.user, {
+      method: 'get',
     }, callback);
   };
 
   api.dividends = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.dividends
+    return _fetch(_apiUrl + _endpoints.dividends, {
+      method: 'get',
     }, callback);
   };
 
   api.orders = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.orders
+    return _fetch(_apiUrl + _endpoints.orders, {
+      method: 'get',
     }, callback);
   };
 
   api.cancel_order = function(order, callback){
     if(order.cancel){
-      return _request.post({
-        uri: order.cancel
+      return _fetch(order.cancel, {
+        method: 'post',
       }, callback);
     }else{
       callback({message: order.state=="cancelled" ? "Order already cancelled." : "Order cannot be cancelled.", order: order }, null, null);
@@ -194,21 +242,21 @@ function RobinhoodWebApi(opts, callback) {
   }
 
   var _place_order = function(options, callback){
-    return _request.post({
-        uri: _apiUrl + _endpoints.orders,
-        form: {
-          account: _private.account,
-          instrument: options.instrument.url,
-          price: options.bid_price,
-          stop_price: options.stop_price,
-          quantity: options.quantity,
-          side: options.transaction,
-          symbol: options.instrument.symbol.toUpperCase(),
-          time_in_force: options.time || 'gfd',
-          trigger: options.trigger || 'immediate',
-          type: options.type || 'market'
-        }
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.orders, {
+      method: 'post',
+      body: {
+        account: _private.account,
+        instrument: options.instrument.url,
+        price: options.bid_price,
+        stop_price: options.stop_price,
+        quantity: options.quantity,
+        side: options.transaction,
+        symbol: options.instrument.symbol.toUpperCase(),
+        time_in_force: options.time || 'gfd',
+        trigger: options.trigger || 'immediate',
+        type: options.type || 'market'
+      }
+    }, callback);
   };
 
   api.place_buy_order = function(options, callback){
@@ -222,66 +270,66 @@ function RobinhoodWebApi(opts, callback) {
   };
 
   api.positions = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.positions
+    return _fetch(_apiUrl + _endpoints.positions, {
+      method: 'get',
     }, callback);
   };
 
   api.news = function(symbol, callback){
-    return _request.get({
-      uri: _apiUrl + [_endpoints.news,'/'].join(symbol)
+    return _fetch(_apiUrl + [_endpoints.news,'/'].join(symbol), {
+      method: 'get',
     }, callback);
   };
 
   api.markets = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.markets
+    return _fetch(_apiUrl + _endpoints.markets, {
+      method: 'get',
     }, callback);
   };
 
   api.sp500_up = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.sp500_up
+    return _fetch(_apiUrl + _endpoints.sp500_up, {
+      method: 'get',
     }, callback);
   };
 
   api.sp500_down = function(callback){
-    return _request.get({
-      uri: _apiUrl + _endpoints.sp500_down
+    return _fetch(_apiUrl + _endpoints.sp500_down, {
+      method: 'get',
     }, callback);
   };
 
   api.create_watch_list = function(name, callback){
-    return _request.post({
-        uri: _apiUrl + _endpoints.watchlists,
-        form: {
-          name: name
-        }
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.watchlists, {
+      method: 'post',
+      body: {
+        name: name
+      }
+    }, callback);
   };
 
   api.watchlists = function(callback){
-    return _request.get({
-        uri: _apiUrl + _endpoints.watchlists
-      }, callback);
+    return _fetch(_apiUrl + _endpoints.watchlists, {
+      method: 'get',
+    }, callback);
   };
 
   api.splits = function(instrument, callback){
-    return _request.get({
-        uri: _apiUrl + [_endpoints.instruments,'/splits/'].join(instrument)
-      }, callback);
+    return _fetch(_apiUrl + [_endpoints.instruments,'/splits/'].join(instrument), {
+      method: 'get',
+    }, callback);
   };
 
   api.historicals = function(symbol, intv, span, callback){
-    return _request.get({
-        uri: _apiUrl + [_endpoints.quotes + 'historicals/','/?interval='+intv+'&span='+span].join(symbol)
-      }, callback);
+    return _fetch(_apiUrl + [_endpoints.quotes + 'historicals/','/?interval='+intv+'&span='+span].join(symbol), {
+      method: 'get',
+    }, callback);
   };
   
   api.url = function (url,callback){
-    return _request.get({
-      uri:url
-    },callback);
+    return _fetch(url, {
+      method: 'get',
+    }, callback);
   };
 
   _init(_options);

@@ -29,8 +29,9 @@
     "nyc": "^10.0.0"
   },
   "dependencies": {
+    "isomorphic-fetch": "^2.2.1",
+    "lodash.merge": "^4.6.0",
     "promise": "^7.1.1",
-    "request": "^2.79.0",
     "should": "^11.1.1"
   }
 }
